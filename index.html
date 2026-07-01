@@ -68,6 +68,9 @@
     appearance: none;
   }
   textarea { min-height: 92px; resize: vertical; }
+  .racknote-head { font-family: ui-monospace, Menlo, monospace; color: var(--ink);
+    font-size: .9rem; font-weight: 600; margin: 12px 0 5px; letter-spacing: .02em; }
+  .racknote-head:first-child { margin-top: 4px; }
   select {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238e8e93' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
@@ -292,6 +295,8 @@
   const STATUS_OPTS =
     ((CONFIG.QUESTIONS || []).find((q) => q.type === "multiselect") || {}).options || [];
   let rackBoxRef = null, statusBoxRef = null, currentDG = "", rerenderRacks = null;
+  let notesBoxRef = null, notesHint = null, notesPlaceholder = "";
+  const RACK_NOTES = {};   // { rack: note-text } for the currently-picked racks
 
   const doneSet = (dg, rack) =>
     (DONE[dg] && DONE[dg][String(rack)]) || new Set();
@@ -325,6 +330,40 @@
       if (keep.has(c.dataset.val)) c.setAttribute("aria-pressed", "true");
     });
   }
+
+  // One Notes box per picked rack, each headed by the rack name, so each rack
+  // records its own note. Text already typed is preserved across rack changes.
+  function selectedRacks() {
+    return rackBoxRef
+      ? [...rackBoxRef.querySelectorAll('.chip[aria-pressed="true"]')].map((c) => c.dataset.val)
+      : [];
+  }
+  function syncRackNotes() {
+    if (!notesBoxRef) return;
+    notesBoxRef.querySelectorAll("textarea[data-rack-note]").forEach((t) => {
+      RACK_NOTES[t.dataset.rackNote] = t.value;
+    });
+  }
+  function refreshRackNotes() {
+    if (!notesBoxRef) return;
+    syncRackNotes();                       // keep what's typed before redrawing
+    const racks = selectedRacks();
+    notesBoxRef.innerHTML = "";
+    if (notesHint) notesHint.style.display = racks.length ? "none" : "block";
+    racks.forEach((rk) => {
+      const head = document.createElement("div");
+      head.className = "racknote-head";
+      head.textContent = "Rack " + rk;
+      const ta = document.createElement("textarea");
+      ta.placeholder = notesPlaceholder;
+      ta.dataset.rackNote = rk;
+      ta.value = RACK_NOTES[rk] || "";
+      ta.addEventListener("input", () => { RACK_NOTES[rk] = ta.value; });
+      notesBoxRef.appendChild(head);
+      notesBoxRef.appendChild(ta);
+    });
+  }
+  function onRackChange() { refreshStatusChips(); refreshRackNotes(); }
 
   async function loadDone() {
     if (notConfigured) return;
@@ -481,13 +520,14 @@
 
     rackBoxRef = rackBox;
     const renderRacksForDG = (dg) => {
+      for (const k in RACK_NOTES) delete RACK_NOTES[k];   // notes don't carry across DGs
       const racks = (fab[phaseSel.value] || {})[dg] || [];
       const avail = racks.filter((rk) => !rackFullyDone(dg, rk));
       renderChips(
         rackBox, avail,
         racks.length ? "All racks already complete for this DG" : "Pick a DG first",
-        refreshStatusChips);
-      refreshStatusChips();
+        onRackChange);
+      onRackChange();
     };
     rerenderRacks = renderRacksForDG;
 
@@ -513,6 +553,19 @@
       wrap.appendChild(box);
       form.appendChild(wrap);
       statusBoxRef = box;
+      return;
+    }
+
+    if (q.id === "notes") {
+      const { wrap } = makeField(q.label, q.required);
+      notesPlaceholder = q.placeholder || "";
+      notesHint = document.createElement("div");
+      notesHint.className = "chips-empty";
+      notesHint.textContent = "Pick racks first";
+      notesBoxRef = document.createElement("div");
+      wrap.appendChild(notesHint);
+      wrap.appendChild(notesBoxRef);
+      form.appendChild(wrap);
       return;
     }
 
@@ -593,16 +646,21 @@
     }
 
     // Build one row per rack, dropping statuses already done for that rack, so
-    // nothing is ever re-submitted (multi-rack safe).
+    // nothing is ever re-submitted (multi-rack safe). Each rack carries its own note.
     const dg = answers.dg;
     let subRacks = answers.rack || []; if (typeof subRacks === "string") subRacks = [subRacks];
     let subStats = answers.status || []; if (typeof subStats === "string") subStats = [subStats];
+    syncRackNotes();                       // pull latest text from the per-rack boxes
     const base = Object.assign({}, CONFIG.FIXED || {}, answers);
-    delete base.rack; delete base.status;
+    delete base.rack; delete base.status; delete base.notes;
     const rows = [];
     subRacks.forEach((rk) => {
       const need = subStats.filter((s) => !doneSet(dg, rk).has(s));
-      if (need.length) rows.push(Object.assign({}, base, { rack: [rk], status: need }));
+      if (!need.length) return;
+      const row = Object.assign({}, base, { rack: [rk], status: need });
+      const note = (RACK_NOTES[rk] || "").trim();
+      if (note) row.notes = note;
+      rows.push(row);
     });
     if (!rows.length) {
       showStatus("err", "Already submitted — nothing new to record.");
@@ -655,6 +713,9 @@
         rackBox.appendChild(note); }
       form.querySelectorAll('.chip[aria-pressed="true"]')
         .forEach((c) => c.setAttribute("aria-pressed", "false"));
+      for (const k in RACK_NOTES) delete RACK_NOTES[k];
+      if (notesBoxRef) notesBoxRef.innerHTML = "";
+      if (notesHint) notesHint.style.display = "block";
       showStatus("ok", "Submitted. Thanks — it's on the dashboard.");
     } catch (err) {
       showStatus("err", "Failed: " + (err.message || "network error"));
