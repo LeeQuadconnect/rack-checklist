@@ -239,6 +239,11 @@
           "LANTRO VISION": ["DG16","DG17","DG18","DG19"]
         },
 
+        // 3c) Special "T1 SPINE" phase: appears in the Phase list only when this
+        //     LVV is picked. It has no DG/rack — just Status + one Note. The dg/
+        //     rack values are what the dashboard uses to place its card.
+        SPINE: { llv: "CBRE", phase: "T1 SPINE", dg: "T1 SPINE", rack: "T1" },
+
         // 4) Other questions. types: text | textarea | number | select
         //    Use { type: "cascade" } to place the Phase/DG/Rack dropdowns.
         QUESTIONS: [
@@ -297,6 +302,9 @@
   let rackBoxRef = null, statusBoxRef = null, currentDG = "", rerenderRacks = null;
   let notesBoxRef = null, notesHint = null, notesPlaceholder = "";
   const RACK_NOTES = {};   // { rack: note-text } for the currently-picked racks
+  const SPINE = CONFIG.SPINE || null;   // special T1 SPINE phase (no DG/rack)
+  let spineMode = false;   // true while the T1 SPINE phase is selected
+  let dgFieldRef = null, rackFieldRef = null;   // to un-hide after a spine submit
 
   const doneSet = (dg, rack) =>
     (DONE[dg] && DONE[dg][String(rack)]) || new Set();
@@ -334,6 +342,7 @@
   // One Notes box per picked rack, each headed by the rack name, so each rack
   // records its own note. Text already typed is preserved across rack changes.
   function selectedRacks() {
+    if (spineMode && SPINE) return [SPINE.rack];
     return rackBoxRef
       ? [...rackBoxRef.querySelectorAll('.chip[aria-pressed="true"]')].map((c) => c.dataset.val)
       : [];
@@ -347,8 +356,18 @@
   function refreshRackNotes() {
     if (!notesBoxRef) return;
     syncRackNotes();                       // keep what's typed before redrawing
-    const racks = selectedRacks();
     notesBoxRef.innerHTML = "";
+    if (spineMode && SPINE) {              // one plain note, no rack heading
+      if (notesHint) notesHint.style.display = "none";
+      const ta = document.createElement("textarea");
+      ta.placeholder = notesPlaceholder;
+      ta.dataset.rackNote = SPINE.rack;
+      ta.value = RACK_NOTES[SPINE.rack] || "";
+      ta.addEventListener("input", () => { RACK_NOTES[SPINE.rack] = ta.value; });
+      notesBoxRef.appendChild(ta);
+      return;
+    }
+    const racks = selectedRacks();
     if (notesHint) notesHint.style.display = racks.length ? "none" : "block";
     racks.forEach((rk) => {
       const head = document.createElement("div");
@@ -494,6 +513,7 @@
     const rackBox = makeChips("rack", true);
     renderChips(rackBox, [], "Pick a DG first");
     rackF.wrap.appendChild(rackBox);
+    dgFieldRef = dgF.wrap; rackFieldRef = rackF.wrap;
 
     const resetFrom = (level) => {
       if (level <= 2) {
@@ -502,8 +522,25 @@
       renderChips(rackBox, [], "Pick a DG first");
     };
 
+    const enterSpine = () => {
+      spineMode = true;
+      currentDG = SPINE.dg;
+      dgF.wrap.style.display = "none";     // no DG / no racks for T1 SPINE
+      rackF.wrap.style.display = "none";
+      onRackChange();                      // status chips + one note
+    };
+    const exitSpine = () => {
+      spineMode = false;
+      currentDG = "";
+      dgF.wrap.style.display = "";
+      rackF.wrap.style.display = "";
+      onRackChange();
+    };
+
     llvSel.addEventListener("change", () => {
+      exitSpine();
       const phases = phasesForLLV(llvSel.value);
+      if (SPINE && llvSel.value === SPINE.llv) phases.push(SPINE.phase);
       fillOptions(phaseSel, phases);
       phaseSel.options[0].textContent = "Select…";
       phaseSel.disabled = phases.length === 0;
@@ -511,6 +548,8 @@
     });
 
     phaseSel.addEventListener("change", () => {
+      if (SPINE && phaseSel.value === SPINE.phase) { enterSpine(); return; }
+      exitSpine();
       const dgs = dgsForLLVPhase(llvSel.value, phaseSel.value);
       fillOptions(dgSel, dgs);
       dgSel.options[0].textContent = "Select…";
@@ -617,6 +656,8 @@
     const answers = {};
     const controls = form.querySelectorAll("[data-key]");
     for (const el of controls) {
+      const field = el.closest(".field");
+      if (field && field.style.display === "none") continue;   // e.g. DG/rack in T1 SPINE mode
       const labelOf = () =>
         el.closest(".field").querySelector("label").textContent.replace("*", "").trim();
 
@@ -644,6 +685,10 @@
       showStatus("err", "Not connected. Fill the CONFIG block first.");
       return;
     }
+
+    // T1 SPINE has no DG/rack UI — stamp the dashboard's placeholder dg/rack so
+    // the submission lands on the T1 SPINE card.
+    if (spineMode && SPINE) { answers.dg = SPINE.dg; answers.rack = [SPINE.rack]; }
 
     // Build one row per rack, dropping statuses already done for that rack, so
     // nothing is ever re-submitted (multi-rack safe). Each rack carries its own note.
@@ -716,6 +761,9 @@
       for (const k in RACK_NOTES) delete RACK_NOTES[k];
       if (notesBoxRef) notesBoxRef.innerHTML = "";
       if (notesHint) notesHint.style.display = "block";
+      spineMode = false;                       // leave T1 SPINE mode, un-hide DG/rack
+      if (dgFieldRef) dgFieldRef.style.display = "";
+      if (rackFieldRef) rackFieldRef.style.display = "";
       showStatus("ok", "Submitted. Thanks — it's on the dashboard.");
     } catch (err) {
       showStatus("err", "Failed: " + (err.message || "network error"));
