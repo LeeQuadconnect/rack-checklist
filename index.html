@@ -159,15 +159,6 @@
   }
   .config-warn.show { display: block; }
 
-  .foot {
-    margin-top: 30px;
-    font-family: var(--mono);
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    color: var(--ink-faint);
-    border-top: 1px solid var(--line-soft);
-    padding-top: 14px;
-  }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -268,8 +259,6 @@
     <form id="surveyForm" novalidate></form>
 
     <div id="status" class="status"></div>
-
-    <p class="foot">Responses land in Supabase → visible on the dashboard.</p>
   </main>
 
 <script>
